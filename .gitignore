@@ -124,5 +124,9 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
+# mpdtube
+logs/
 settings.yaml
 .cache*
+*.log
+*.log*

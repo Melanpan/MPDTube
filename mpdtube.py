@@ -7,6 +7,7 @@ import requests
 import re
 import time
 import logging
+import logging.handlers
 import yaml
 import coloredlogs
 import traceback
@@ -28,7 +29,13 @@ from mpd import MPDClient
 destination_song = ""
 
 class ydl_logger(object):
+    os.makedirs("logs", exist_ok=True)
     log = logging.getLogger("YoutubeDL")
+    handler = logging.handlers.RotatingFileHandler("logs/youtubedl.log", maxBytes=1000, backupCount=3)
+    handler.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    log.addHandler(handler)
 
     def error(self, msg):
         self.log.error(msg)
@@ -53,6 +60,7 @@ class tube():
     spotify_token = None
 
     def __init__(self):
+        self.setup_logging()
         self.log.info("MPDTube is starting")
         self.load_config()
         os.makedirs(self.config['paths']['download'], exist_ok=True)
@@ -70,6 +78,15 @@ class tube():
         threading.Thread(target=self.queue_thread).start()
         self.login_spotify()
         self.mqtt.loop_forever()
+
+    def setup_logging(self):
+        os.makedirs("logs", exist_ok=True)
+        handler = logging.handlers.RotatingFileHandler("mpdtube.log", maxBytes=1000, backupCount=3)
+        handler.setLevel(logging.INFO)
+        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        handler.setFormatter(formatter)
+
+        self.log.addHandler(handler)
 
     def load_config(self):
         with open("settings.yaml", "r") as f:
@@ -133,7 +150,7 @@ class tube():
             self.queue.put((msg.payload.decode("utf-8"), False))
             self.log_info("Received on play: %s" % msg.payload.decode("utf-8"))
 
-        elif msg.topic == os.path.join(self.config['mqtt']['topics']['play'], "nurdbot"):
+        elif msg.topic == os.path.join(self.config['mqtt']['topics']['play'], "`nurdbot`"):
             self.queue.put((msg.payload.decode("utf-8"), True))
             self.log_info("Received on play (nurdbot): %s" % msg.payload.decode("utf-8"))
 
@@ -226,7 +243,7 @@ class tube():
     def play_song(self, url, nurdbot=False):
         mpd = MPDClient()
         mpd.connect(self.config['mpd']['host'], self.config['mpd']['port'])
-    
+
         if url.startswith("spotify:"):
             # Handle spotify urls
            file = self.download(self.find_song_spotify(url))
@@ -294,6 +311,7 @@ class tube():
         mpd.disconnect()
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+
+    logging.basicConfig(level=logging.INFO)    
     coloredlogs.install(level='INFO', fmt="%(asctime)s %(name)s %(levelname)s %(message)s")
     mpdtube = tube()
