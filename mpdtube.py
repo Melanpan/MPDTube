@@ -23,13 +23,13 @@ destination_song = ""
 
 class ydl_logger(object):
     log = logging.getLogger("YoutubeDL")
-    
+
     def error(self, msg):
         self.log.error(msg)
 
     def debug(self, msg):
         global destination_song # fuck you for forcing me to use this ytdl
-        self.log.info(msg)  
+        self.log.info(msg)
 
         if msg.startswith("Destination: "):
             destination_song  = "Destination: ".join(msg.split("Destination: ")[:1])
@@ -51,18 +51,16 @@ class tube():
         os.makedirs(self.config['paths']['download'], exist_ok=True)
 
         self.mqtt = mqtt.Client()
-        
         self.mqtt.connect(self.config['mqtt']['host'], self.config['mqtt']['port'], 60)
         self.mqtt.on_connect = self.on_mqtt_connect
         self.mqtt.on_message = self.on_mqtt_message
-        
+
         self.queue = Queue()
 
         self.ydl_opts = {'noprogress': True, 'format': 'bestaudio/best', "noplaylist": True, "default_search": "ytsearch",
                          'outtmpl': os.path.join(self.config['paths']['download'], "%(title)s.%(ext)s"), "no_color": True,
                          'postprocessors': [{'key': 'FFmpegExtractAudio',}], 'logger': ydl_logger(),
                         }
-        
         threading.Thread(target=self.queue_thread).start()
         self.mqtt.loop_forever()
 
@@ -79,7 +77,6 @@ class tube():
                     self.play_song(item[0], item[1])
                 except Exception as e:
                     self.log_error("An exception occured while processing %s (%s)" % (item, e))
-                    
                     self.log.error(traceback.print_exc())
 
         self.log.warning("Queue thread has stopped")
@@ -91,7 +88,7 @@ class tube():
 
     def log_info(self, msg):
         self.log.info(msg)
-        topic = os.path.join(self.config['mqtt']['topics']['status'], "info")    
+        topic = os.path.join(self.config['mqtt']['topics']['status'], "info")
         self.mqtt.publish(topic , msg)
 
     def log_error(self, msg):
@@ -102,9 +99,8 @@ class tube():
     def log_warning(self, msg):
         self.log.error(msg)
         topic = os.path.join(self.config['mqtt']['topics']['status'], "error")
-        
         self.mqtt.publish(topic, msg)
-    
+
     def on_mqtt_connect(self, client, userdata, flags, rc):
         self.log.info("MQTT connected.")
 
@@ -117,12 +113,12 @@ class tube():
         if msg.topic == self.config['mqtt']['topics']['play']:
             self.queue.put((msg.payload.decode("utf-8"), False))
             self.log_info("Received on play: %s" % msg.payload.decode("utf-8"))
-       
+
         elif msg.topic == os.path.join(self.config['mqtt']['topics']['play'], "nurdbot"):
             self.queue.put((msg.payload.decode("utf-8"), True))
             self.log_info("Received on play (nurdbot): %s" % msg.payload.decode("utf-8"))
     def download(self, url):
-        global destination_song 
+        global destination_song
 
         with youtube_dl.YoutubeDL(self.ydl_opts) as ydl:
             ydl.extract_info(url, download=True)
@@ -130,10 +126,10 @@ class tube():
             return destination_song
 
     def find_prio(self, mpd):
-        """ Increase the priority of every song and returns the lowest priority 
-            that should be used for the next song. Causing it to be played after the 
+        """ Increase the priority of every song and returns the lowest priority
+            that should be used for the next song. Causing it to be played after the
             previous high prio songs. """
-        
+
         lowest_prio = 255
 
         for song in mpd.playlistinfo():
@@ -143,13 +139,12 @@ class tube():
 
         if lowest_prio > 1:
             return lowest_prio - 1
-        
+
         return 1
 
     def find_song_spotify(self, url):
         """ Try to return a spotify song into an youtube version of the song """
         self.log.warning("Spotify is not supported.")
-            
         return None
 
     def play_song(self, url, nurdbot=False):
@@ -158,7 +153,7 @@ class tube():
 
         if url.startswith("spotify:"):
             # Handle spotify urls
-            file = self.find_song_spotify(url)
+           self.find_song_spotify(url)
         else:
             if nurdbot:
                 self.log_nurdbot("INFO","Processing: %s" % url)
@@ -173,22 +168,20 @@ class tube():
                 self.log_nurdbot("ERROR", "Couldn't find %s" % file)
 
             mpd.close()
-            mpd.disconnect()  
+            mpd.disconnect()
             return
 
         file = os.path.basename(file)
 
         self.log_info("Attempting to add: %s " % url)
         mpd.update(os.path.join(self.config['paths']['relative'], file))
-        
+
         # Set creation and modification time to now
-        
         os.utime(os.path.join(self.config['paths']['download'], file), times=None)
-        
 
         if self.config['paths']['nfs_delay'] > 0:
             time.sleep(self.config['paths']['nfs_delay'] ) # Wait a bit for it to sync back to NFS
-        
+
         song_id = mpd.addid(os.path.join(self.config['paths']['relative'], file))
 
         if nurdbot:
@@ -213,7 +206,7 @@ class tube():
             prio = self.find_prio(mpd)
             self.log_info("putting song %s at priority %s" % (file, prio))
             mpd.prioid(prio, song_id)
-        
+
         mpd.close()
         mpd.disconnect()
 
