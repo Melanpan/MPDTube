@@ -12,14 +12,17 @@ import coloredlogs
 import traceback
 import json
 import shlex
+import mutagen
+import mutagen.mp4
+import mutagen.easyid3
+import mutagen.oggopus
+import mutagen.easymp4
+import mutagen.id3
 
 from queue import Queue
 from mpd import MPDClient
 
 destination_song = ""
-
-
-# zonder shuffle werkt 'next in queue' met die prioriteit niet
 
 class ydl_logger(object):
     log = logging.getLogger("YoutubeDL")
@@ -59,8 +62,7 @@ class tube():
 
         self.ydl_opts = {'noprogress': True, 'format': 'bestaudio/best', "noplaylist": True, "default_search": "ytsearch",
                          'outtmpl': os.path.join(self.config['paths']['download'], "%(title)s.%(ext)s"), "no_color": True,
-                         'postprocessors': [{'key': 'FFmpegExtractAudio',}], 'logger': ydl_logger(),
-                        }
+                         'postprocessors': [{'key': 'FFmpegExtractAudio',}], 'logger': ydl_logger(), }
         threading.Thread(target=self.queue_thread).start()
         self.mqtt.loop_forever()
 
@@ -117,6 +119,7 @@ class tube():
         elif msg.topic == os.path.join(self.config['mqtt']['topics']['play'], "nurdbot"):
             self.queue.put((msg.payload.decode("utf-8"), True))
             self.log_info("Received on play (nurdbot): %s" % msg.payload.decode("utf-8"))
+
     def download(self, url):
         global destination_song
 
@@ -124,6 +127,43 @@ class tube():
             ydl.extract_info(url, download=True)
             self.log_info("Destination song: %s" % destination_song)
             return destination_song
+
+    def extract_artist_title(self, audio_file):
+        """ Attempts to extract the artist - title from the file name and returns it as a tuple,
+            if it failed to do so it will return only the title. Tuple is (title, artist) """
+
+        audio_file = os .path.basename(audio_file)
+        audio_re = re.match(r'(.*?)\s-\s(.+)', "".join(os.path.splitext(audio_file)[:-1]))
+        if audio_re:
+            return (audio_re.groups()[1], audio_re.groups()[0])
+        return ("".join(os.path.splitext(audio_file)[:-1]))
+
+    def add_metadata(self, audio_file, metadict):
+        """
+            Add any metadata you want to an audio file, as long as mutagen supports it and you add it to mutagen_ext_mapping.
+        """
+        mutagen_ext_mapping = {".mp3":mutagen.easyid3.EasyID3, ".m4a": mutagen.easymp4.EasyMP4, ".opus": mutagen.oggopus.OggOpus}
+
+        self.log_info("Adding metadata to %s (%s)" % (audio_file, metadict))
+
+        # Get the extention of the audio file
+        audio_ext = os.path.splitext(audio_file)[-1].lower()
+
+        if audio_ext in mutagen_ext_mapping:
+            # Initalize the correct mutagen class for the extention, with the audio file
+            try:
+                mutagen_class = mutagen_ext_mapping[audio_ext](audio_file)
+            except mutagen.id3.ID3NoHeaderError:
+                mutagen_class = mutagen.File(audio_file, easy=True)
+                mutagen_class.add_tags()
+
+            # Set any metadata we want
+            for meta in metadict:
+                mutagen_class[meta] = metadict[meta]
+
+            mutagen_class.save(audio_file)
+        else:
+            raise Exception("Unsuported file format for setting metadata (%s, %s)" % (audio_ext, audio_file))
 
     def find_prio(self, mpd):
         """ Increase the priority of every song and returns the lowest priority
@@ -183,6 +223,13 @@ class tube():
             time.sleep(self.config['paths']['nfs_delay'] ) # Wait a bit for it to sync back to NFS
 
         song_id = mpd.addid(os.path.join(self.config['paths']['relative'], file))
+
+        # Set the artist - title metadata
+        metadata = self.extract_artist_title(file)
+        if len(metadata) == 2:
+            self.add_metadata(os.path.join(self.config['paths']['download'], file), {"title": metadata[0], "artist": metadata[1]})
+        else:
+            self.add_metadata(os.path.join(self.config['paths']['download'], file), {"title": metadata[0]})
 
         if nurdbot:
             self.log_nurdbot("INFO", "Adding %s to MPD @ pos %s" % (file, song_id))

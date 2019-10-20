@@ -1,0 +1,7 @@
+mutagen>=1.42.0
+coloredlogs>=10.0
+python_mpd2>=1.0.0
+requests>=2.22.0
+youtube_dl>=2019.9.28
+paho_mqtt>=1.4.0
+PyYAML>=5.1.2
