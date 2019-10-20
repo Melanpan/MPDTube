@@ -1,0 +1,15 @@
+[Unit]
+Description=MPD Tube
+After=multi-user.target
+Conflicts=getty@tty1.Service
+
+[Service]
+Type=simple
+User=pi
+Group=p
+ExecStart=/usr/bin/python3 /home/pi/mpdtube/mpdtube.py
+StandardInput=tty-force
+WorkingDirectory=/home/pi/mpdtube
+
+[Install]
+WantedBy=multi-user.target 

@@ -12,12 +12,15 @@ import coloredlogs
 import traceback
 import json
 import shlex
+import spotipy
 import mutagen
 import mutagen.mp4
 import mutagen.easyid3
 import mutagen.oggopus
 import mutagen.easymp4
 import mutagen.id3
+import spotipy
+import spotipy.util
 
 from queue import Queue
 from mpd import MPDClient
@@ -47,6 +50,7 @@ class tube():
     log = logging.getLogger("MPDTube")
     config = {}
     songs = []
+    spotify_token = None
 
     def __init__(self):
         self.log.info("MPDTube is starting")
@@ -57,18 +61,31 @@ class tube():
         self.mqtt.connect(self.config['mqtt']['host'], self.config['mqtt']['port'], 60)
         self.mqtt.on_connect = self.on_mqtt_connect
         self.mqtt.on_message = self.on_mqtt_message
-
         self.queue = Queue()
 
         self.ydl_opts = {'noprogress': True, 'format': 'bestaudio/best', "noplaylist": True, "default_search": "ytsearch",
                          'outtmpl': os.path.join(self.config['paths']['download'], "%(title)s.%(ext)s"), "no_color": True,
                          'postprocessors': [{'key': 'FFmpegExtractAudio',}], 'logger': ydl_logger(), }
+
         threading.Thread(target=self.queue_thread).start()
+        self.login_spotify()
         self.mqtt.loop_forever()
 
     def load_config(self):
         with open("settings.yaml", "r") as f:
             self.config = yaml.safe_load(f)
+
+    def login_spotify(self):
+        if os.path.exists(".cache-%s" % format(self.config['spotify']['username'])) or "TERM" in os.environ:
+            self.spotify_token = spotipy.util.prompt_for_user_token(self.config['spotify']['username'], "user-library-read",
+                                                    self.config['spotify']['client']['id'],
+                                                    self.config['spotify']['client']['secret'],
+                                                    redirect_uri='http://localhost/mpdtube')
+        else:
+            self.log_warning("""No cache file with a Spotify token exists,
+            and we are not running in a terminal so we can not request a token.
+            \n\nSpotify support will be disabled!\n\n
+            To get around this, run MPDTube in a terminal and follow the on-screen instructions.""")
 
     def queue_thread(self):
         self.log.info("Queue thread is up")
@@ -129,13 +146,17 @@ class tube():
             return destination_song
 
     def extract_artist_title(self, audio_file):
-        """ Attempts to extract the artist - title from the file name and returns it as a tuple,
-            if it failed to do so it will return only the title. Tuple is (title, artist) """
+        """
+            Attempts to extract the artist - title from the file name and returns it as a tuple,
+            if it failed to do so it will return only the title. Tuple is (title, artist)
+        """
 
         audio_file = os .path.basename(audio_file)
         audio_re = re.match(r'(.*?)\s-\s(.+)', "".join(os.path.splitext(audio_file)[:-1]))
+
         if audio_re:
             return (audio_re.groups()[1], audio_re.groups()[0])
+
         return ("".join(os.path.splitext(audio_file)[:-1]))
 
     def add_metadata(self, audio_file, metadict):
@@ -166,9 +187,11 @@ class tube():
             raise Exception("Unsuported file format for setting metadata (%s, %s)" % (audio_ext, audio_file))
 
     def find_prio(self, mpd):
-        """ Increase the priority of every song and returns the lowest priority
+        """
+            Increase the priority of every song and returns the lowest priority
             that should be used for the next song. Causing it to be played after the
-            previous high prio songs. """
+            previous high prio songs.
+        """
 
         lowest_prio = 255
 
@@ -184,16 +207,29 @@ class tube():
 
     def find_song_spotify(self, url):
         """ Try to return a spotify song into an youtube version of the song """
-        self.log.warning("Spotify is not supported.")
+
+        if "spotify" in self.config:
+            spotify = spotipy.Spotify(auth=self.spotify_token)
+
+            try:
+                track = spotify.track(url)
+            except Exception as e:
+                self.log_warning("Failed to process spotify url (%s)" % (url))
+                return None
+
+            return "%s - %s" % (track['artists'][0]['name'], track['name'])
+
+        self.log_info("Spotify support not enabled.")
         return None
+
 
     def play_song(self, url, nurdbot=False):
         mpd = MPDClient()
         mpd.connect(self.config['mpd']['host'], self.config['mpd']['port'])
 
-        if url.startswith("spotify:"):
+        if url.startswith("spotify:track:"):
             # Handle spotify urls
-           self.find_song_spotify(url)
+           file = self.download(url)
         else:
             if nurdbot:
                 self.log_nurdbot("INFO","Processing: %s" % url)
