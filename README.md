@@ -1,6 +1,6 @@
 ﻿### Overview
 
-A program to add almost anything that youtube-dl supports to MPD with communication going over MQTT.
+A program to add almost anything that youtube-dl supports to MPD with it's communication going over MQTT.
 
 ### About
 My local hackers space, [Nurdspace](https://nurdspace.nl/Main_Page), has a MPD server running on a Raspberry Pi and have some of it's functionality accessable through IRC. (Think of the next command and so on.). While every member can upload their own music to a NFS share, it's often more cumbersome if you want to let the space enjoy some fresh new beats from Youtube. 
@@ -32,7 +32,7 @@ mqtt:
   topics:
     play: mpd/youtube-dl/play
     status: mpd/youtube-dl/status
-
+  
 mpd:
   host: localhost
   port: 6600
@@ -40,6 +40,10 @@ mpd:
 nurdbot:
   jsb-udp: /home/pi/mpdtube/jsb-udpsend
   python2: /usr/bin/python
+
+abuse:
+  length: 900
+  filesize: 100000
 
 spotify:
   client:
@@ -49,21 +53,23 @@ spotify:
 ```
 
 
-| Setting               | Description                              |
-|-----------------------|------------------------------------------|
-| paths:download        | The output path of where MPDTube should download the files. |
-| paths:relative        | The relative path as seen from MPD.      |
-| paths:nfs_delay       | The amount of time to wait for NFS to get updated, if you're not using nfs you can set this to 0. |
-| mqtt:host             | mqtt host.                               |
-| mqtt:port             | mqtt port.                               |
-| mqtt:topics:play      | The topic to subscribe to, to look for queries. |
-| mqtt:topics:status    | The topic to send log messages to.       |
-| mpd:host              | The host/IP of the system running the MPD server. |
-| mpd:port              | The port the MPD server listens on.      |
-| nurdbot:jsb-udp       | Path to the jsb-udp python file for Jsonbot integration. |
-| nurdbot:python2       | Path to python2 for Jsonbot integration. |
-| spotify:client:id     | Spotify application id                   |
-| spotify:username      | Your spotify username                    |
-| spotify:client:secret | Spotify application secret               |
+| Setting               | Description                              | Required
+|-----------------------|------------------------------------------|------------------------------------------|
+| paths:download        | The output path of where MPDTube should download the files. | Yes
+| paths:relative        | The relative path as seen from MPD.      | Yes
+| paths:nfs_delay       | The amount of time to wait for NFS to get updated, if you're not using nfs you can set this to 0. | Yes
+| mqtt:host             | mqtt host.                               | Yes
+| mqtt:port             | mqtt port.                               | Yes
+| mqtt:topics:play      | The topic to subscribe to, to look for queries. | Yes
+| mqtt:topics:status    | The topic to send log messages to.       | Yes
+| mpd:host              | The host/IP of the system running the MPD server. | Yes
+| mpd:port              | The port the MPD server listens on.      | Yes
+| nurdbot:jsb-udp       | Path to the jsb-udp python file for Jsonbot integration. | No
+| nurdbot:python2       | Path to python2 for Jsonbot integration. | No
+| abuse:length          | Max duration allowed. | No
+| abuse:filesize        | Max file size allowed. | No
+| spotify:client:id     | Spotify application id                   | No
+| spotify:username      | Your spotify username                    | No
+| spotify:client:secret | Spotify application secret               | No
 
 
