@@ -226,10 +226,10 @@ class tube():
     def play_song(self, url, nurdbot=False):
         mpd = MPDClient()
         mpd.connect(self.config['mpd']['host'], self.config['mpd']['port'])
-
-        if url.startswith("spotify:track:"):
+    
+        if url.startswith("spotify:"):
             # Handle spotify urls
-           file = self.download(url)
+           file = self.download(self.find_song_spotify(url))
         else:
             if nurdbot:
                 self.log_nurdbot("INFO","Processing: %s" % url)
