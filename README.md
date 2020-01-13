@@ -57,7 +57,7 @@ spotify:
 |-----------------------|------------------------------------------|------------------------------------------|
 | paths:download        | The output path of where MPDTube should download the files. | Yes
 | paths:relative        | The relative path as seen from MPD.      | Yes
-| paths:nfs_delay       | The amount of time to wait for NFS to get updated, if you're not using nfs you can set this to 0. | Yes
+| paths:nfs_timeout     | The amount of time to wait for NFS to get updated, if you're not using nfs you can set this to 0. | Yes
 | mqtt:host             | mqtt host.                               | Yes
 | mqtt:port             | mqtt port.                               | Yes
 | mqtt:topics:play      | The topic to subscribe to, to look for queries. | Yes
@@ -73,3 +73,9 @@ spotify:
 | spotify:client:secret | Spotify application secret               | No
 
 
+### Note 1
+It's tightly integrated with the Nurdbot (running jsonbot), as MPDtube has the abillity to directly communicate back using the bot's jsb-udpsend program
+this might eventually get swapped out to only have this communication over MQTT.
+
+### Note 2 
+Spotify support seems to still be semi broken.

@@ -22,6 +22,8 @@ import mutagen.easymp4
 import mutagen.id3
 import spotipy
 import spotipy.util
+import datetime
+
 
 from queue import Queue
 from mpd import MPDClient
@@ -117,26 +119,40 @@ class tube():
 
         self.log.warning("Queue thread has stopped")
 
-    def log_nurdbot(self, type, msg):
+    def convert_bytes(self, num):
+        step_unit = 1000.0 #1024 bad the size
+
+        for x in ['bytes', 'KB', 'MB', 'GB', 'TB']:
+            if num < step_unit:
+                return "%3.1f %s" % (num, x)
+            num /= step_unit
+
+    def convert_time(self, time):
+        return str(datetime.timedelta(seconds=time))
+
+    def log_nurdbot(self, type, msg, payload, directMessage=False):
         if "nurdbot" in self.config and "jsb-udp" in self.config['nurdbot'] and "python2" in self.config['nurdbot']:
             message = shlex.quote("<MPDTUBE:%s> %s" % (type, msg))
-            cmd = "%s %s -m %s" % (self.config['nurdbot']['python2'], self.config['nurdbot']['jsb-udp'], message)
+
+            destination = payload['user']
+
+            if payload['channel'][0] == "#" and not directMessage:
+                destination = payload['channel']
+
+            cmd = "%s %s -p %s -m %s" % (self.config['nurdbot']['python2'], self.config['nurdbot']['jsb-udp'], shlex.quote(destination) , message)
             os.system(cmd)
 
     def log_info(self, msg):
         self.log.info(msg)
-        topic = os.path.join(self.config['mqtt']['topics']['status'], "info")
-        self.mqtt.publish(topic , msg)
+        self.mqtt.publish(os.path.join(self.config['mqtt']['topics']['status'], "info") , msg)
 
     def log_error(self, msg):
         self.log.error(msg)
-        topic = os.path.join(self.config['mqtt']['topics']['status'], "error")
-        self.mqtt.publish(topic, msg)
+        self.mqtt.publish(os.path.join(self.config['mqtt']['topics']['status'], "error"), msg)
 
     def log_warning(self, msg):
         self.log.error(msg)
-        topic = os.path.join(self.config['mqtt']['topics']['status'], "error")
-        self.mqtt.publish(topic, msg)
+        self.mqtt.publish(os.path.join(self.config['mqtt']['topics']['status'], "error"), msg)
 
     def on_mqtt_connect(self, client, userdata, flags, rc):
         self.log.info("MQTT connected.")
@@ -152,11 +168,12 @@ class tube():
 
     def on_mqtt_message(self, client, userdata, msg):
         if msg.topic == self.config['mqtt']['topics']['play']:
-            self.queue.put((msg.payload.decode("utf-8"), False))
+            self.queue.put(({"query": msg.payload.decode("utf-8")}, False))
             self.log_info("Received on play: %s" % msg.payload.decode("utf-8"))
 
-        elif msg.topic == os.path.join(self.config['mqtt']['topics']['play'], "`nurdbot`"):
-            self.queue.put((msg.payload.decode("utf-8"), True))
+        elif msg.topic == os.path.join(self.config['mqtt']['topics']['play'], "nurdbot"):
+            payload = json.loads(msg.payload.decode("utf-8"))
+            self.queue.put((payload, True))
             self.log_info("Received on play (nurdbot): %s" % msg.payload.decode("utf-8"))
 
     def ydl_download(self, url):
@@ -184,7 +201,7 @@ class tube():
         if audio_re:
             return (audio_re.groups()[1], audio_re.groups()[0])
 
-        return ("".join(os.path.splitext(audio_file)[:-1]))
+        return ("".join(os.path.splitext(audio_file)[:-1]), )
 
     def add_metadata(self, audio_file, metadict):
         """
@@ -211,7 +228,7 @@ class tube():
 
             mutagen_class.save(audio_file)
         else:
-            raise Exception("Unsuported file format for setting metadata (%s, %s)" % (audio_ext, audio_file))
+            raise Exception("Unsuported file format for metadata (%s, %s)" % (audio_ext, audio_file))
 
     def find_prio(self, mpd):
         """
@@ -250,16 +267,21 @@ class tube():
         return None
 
 
-    def play_song(self, query, nurdbot=False):
+    def play_song(self, payload, nurdbot=False):
         duration = 0
+        query = payload['query']
+        print(payload)
 
         if query.startswith("spotify:"):
             # Handle spotify urls
-           query = self.find_song_spotify(query)
+           query = self.find_song_spotify()
            if not query:
                 self.log.warning("Failed to find anything on spotify for %s" % (query) )
                 if nurdbot:
-                    self.log_nurdbot("WARNING", "Failed to find anything on spotify for %s" % (query))
+                    self.log_nurdbot("WARNING", "Failed to find anything on spotify for %s" % (query), payload, directMessage=True)
+
+        if nurdbot:
+            self.log_nurdbot("INFO", "Processing: %s" % (query), payload, directMessage=True)
 
         try:
             ydl_info = self.ydl_get_info(query)
@@ -267,16 +289,30 @@ class tube():
             ydl_info = None
             self.log.warning("Failed to find anything for %s" % (query) )
             if nurdbot:
-                self.log_nurdbot("WARNING", "Failed to find anything for %s" % (query))
+                self.log_nurdbot("WARNING", "Failed to find anything for %s" % (query), payload, directMessage=False)
             return
 
+        with open("tmp.json", "w") as fout:
+                import json
+                fout.write(json.dumps(ydl_info))
+
+        # Pick the first entry if there are multiple items
         if "entries" in ydl_info:
             duration = ydl_info['entries'][0]['duration']
             filesize = ydl_info['entries'][0]['filesize']
+            name = ydl_info['entries'][0]['title']
         else:
             duration = ydl_info['duration']
             filesize = ydl_info['filesize']
+            name = ydl_info['title']
 
+        if nurdbot:
+            self.log_nurdbot("INFO", "Downloading %s (Duration: %s, size: %s)" % (name, self.convert_time(duration),
+                                                                                  self.convert_bytes(filesize)), payload,
+                                                                                  directMessage=True)
+
+        #if nurdbot:
+            #self.log_nurdbot("INFO", "Downloading ")
         # if "abuse" in self.config and "length" in self.config['abuse'] and duration > self.config['abuse']['length']:
         #     self.log.warning("Result for `%s` exceeds max length (%s > %s)" % (query, duration, self.config['abuse']['length']) )
         #     if nurdbot:
@@ -301,7 +337,7 @@ class tube():
         if not os.path.exists(file):
             self.log_error("Couldn't find %s" % file)
             if nurdbot:
-                self.log_nurdbot("ERROR", "Couldn't find %s" % file)
+                self.log_nurdbot("ERROR", "Couldn't find %s" % file, payload)
 
             mpd.close()
             mpd.disconnect()
@@ -309,48 +345,69 @@ class tube():
 
         file = os.path.basename(file)
 
-        self.log_info("Attempting to add: %s " % query)
+        self.log_info("Attempting to add: %s" % query)
         mpd.update(os.path.join(self.config['paths']['relative'], file))
 
         # Set creation and modification time to now
-        os.utime(os.path.join(self.config['paths']['download'], file), times=None)
+        try:
+            os.utime(os.path.join(self.config['paths']['download'], file), times=None)
+        except Exception as e:
+            self.error("Failed to set time for %s (%s)" % (file, e))
 
-        if self.config['paths']['nfs_delay'] > 0:
+        if not os.path.exists(file) and self.config['paths']['nfs_timeout'] > 0:
             # Wait a bit for it to sync back to NFS
-            time.sleep(self.config['paths']['nfs_delay'])
+            self.log_info("Waiting for NFS sync (Timeout in: %s seconds)" % self.config['paths']['nfs_timeout'])
+            time_waited = 0
+            while True:
+                if os.path.exists(not os.path.exists(file)):
+                    self.log.info("%s exists!", (file))
+                    break
 
-        # Set the artist - title metadata
-        metadata = self.extract_artist_title(file)
-        if len(metadata) == 2:
-            self.add_metadata(os.path.join(self.config['paths']['download'], file), {"title": metadata[0], "artist": metadata[1]})
-        else:
-            self.add_metadata(os.path.join(self.config['paths']['download'], file), {"title": metadata[0]})
+                if time_waited >= self.config['paths']['nfs_timeout']:
+                    self.log.error("Timeout waiting for %s to appear! (NFS)", (file))
+                    self.log_nurdbot("Timeout waiting for %s to appear! (NFS)", (file, payload))
+                    return
+                time.sleep(1)
+                time_waited += 1
+
+        # Set ID3 metadata
+        title_artist = self.extract_artist_title(file)
+        metadata = {"title": title_artist[0], "comment": "%s (requested by %s)" % (query, payload['user'])}
+
+        if len(title_artist) == 2:
+            metadata.update({"artist": title_artist[1]})
+
+        try:
+            self.add_metadata(os.path.join(self.config['paths']['download'], file), metadata)
+        except Exception as e:
+            self.log.error("Mutagen error: %s" % (e))
 
         # Add song to MPD
         song_id = mpd.addid(os.path.join(self.config['paths']['relative'], file))
 
         if nurdbot:
-            self.log_nurdbot("INFO", "Adding %s to MPD @ pos %s" % (file, song_id))
+            self.log_nurdbot("INFO", "Adding %s to MPD @ pos %s" % (file, song_id), payload, directMessage=False)
 
         self.log_info("[%s] Song id is: %s" % (file, song_id))
 
         mpd_status = mpd.status()
-        self.log_info("MPD status: %s" % mpd_status)
-        self.log.info("Current MPD song: %s" % mpd.currentsong())
+        self.log_info("MPD status: %s" % mpd_status['state'])
+        self.log.info("Current MPD song: %s" % mpd.currentsong()['file'])
 
         if mpd_status['state'] != "play":
             # Start playing the song right away if we aren't playing anything yet.
 
             self.log_info("playing song %s right away" % file)
             mpd.playid(song_id)
+            return
 
         elif mpd_status['random'] != "1":
-            self.log_warning("MPD is not in random mode, this is currently unsupported!")
-            self.songs.append(song_id)
-        else:
-            prio = self.find_prio(mpd)
-            self.log_info("putting song %s at priority %s" % (file, prio))
-            mpd.prioid(prio, song_id)
+            self.log_warning("MPD is not in random mode, this is currently unsupported! Switching to Random mode")
+            mpd.random(1)
+
+        prio = self.find_prio(mpd)
+        self.log_info("putting song %s at priority %s" % (file, prio))
+        mpd.prioid(prio, song_id)
 
         mpd.close()
         mpd.disconnect()
