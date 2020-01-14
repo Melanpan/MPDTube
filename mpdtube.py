@@ -274,7 +274,7 @@ class tube():
 
         if query.startswith("spotify:"):
             # Handle spotify urls
-           query = self.find_song_spotify()
+           query = self.find_song_spotify(query)
            if not query:
                 self.log.warning("Failed to find anything on spotify for %s" % (query) )
                 if nurdbot:
