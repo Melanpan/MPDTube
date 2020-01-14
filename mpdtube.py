@@ -270,7 +270,6 @@ class tube():
     def play_song(self, payload, nurdbot=False):
         duration = 0
         query = payload['query']
-        print(payload)
 
         if query.startswith("spotify:"):
             # Handle spotify urls
@@ -291,10 +290,6 @@ class tube():
             if nurdbot:
                 self.log_nurdbot("WARNING", "Failed to find anything for %s" % (query), payload, directMessage=False)
             return
-
-        with open("tmp.json", "w") as fout:
-                import json
-                fout.write(json.dumps(ydl_info))
 
         # Pick the first entry if there are multiple items
         if "entries" in ydl_info:
