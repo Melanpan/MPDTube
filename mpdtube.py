@@ -15,8 +15,6 @@ import json
 import shlex
 import spotipy
 import mutagen
-import mutagen.mp4
-import mutagen.easyid3
 import mutagen.oggopus
 import mutagen.easymp4
 import mutagen.id3
@@ -116,6 +114,8 @@ class tube():
                 except Exception as e:
                     self.log_error("An exception occured while processing %s (%s)" % (item, e))
                     self.log.error(traceback.print_exc())
+                    if item[1]:
+                        self.log_nurdbot("An exception occured while processing %s (%s)" % (item, e), item[0], directMessage=True)
 
         self.log.warning("Queue thread has stopped")
 
@@ -207,28 +207,38 @@ class tube():
         """
             Add any metadata you want to an audio file, as long as mutagen supports it and you add it to mutagen_ext_mapping.
         """
-        mutagen_ext_mapping = {".mp3":mutagen.easyid3.EasyID3, ".m4a": mutagen.easymp4.EasyMP4, ".opus": mutagen.oggopus.OggOpus}
-
         self.log_info("Adding metadata to %s (%s)" % (audio_file, metadict))
 
         # Get the extention of the audio file
-        audio_ext = os.path.splitext(audio_file)[-1].lower()
+        audio_ext = os.path.splitext(audio_file)[-1].lower()[1:]
+        mutagen_class = None
 
-        if audio_ext in mutagen_ext_mapping:
-            # Initalize the correct mutagen class for the extention, with the audio file
-            try:
-                mutagen_class = mutagen_ext_mapping[audio_ext](audio_file)
-            except mutagen.id3.ID3NoHeaderError:
-                mutagen_class = mutagen.File(audio_file, easy=True)
-                mutagen_class.add_tags()
+        # Support for MP4 and M4A files
+        if audio_ext == "m4a" or audio_ext == "mp4":
+            mutagen_class = mutagen.mp4.MP4(audio_file)
+            if "title" in metadict: mutagen_class['\xa9nam']  = metadict['title']
+            if "artist" in metadict: mutagen_class['\xa9ART'] = metadict['artist']
+            if "comment" in metadict: mutagen_class['\xa9cmt'] = metadict['comment']
 
-            # Set any metadata we want
-            for meta in metadict:
-                mutagen_class[meta] = metadict[meta]
+        # Support for ogg and opus
+        elif audio_ext == "ogg" or audio_ext == "opus":
+            mutagen_class = mutagen.oggopus.OggOpus(audio_file)
+            if "title" in metadict: mutagen_class['title']  = metadict['title']
+            if "artist" in metadict: mutagen_class['artist'] = metadict['artist']
+            if "comment" in metadict: mutagen_class['comment'] = metadict['comment']
 
-            mutagen_class.save(audio_file)
+        # Support for mp3s
+        elif audio_ext == "mp3":
+            mutagen_class = mutagen.id3.ID3() # Not loading a song here, instead we will do this later
+            if "title" in metadict: mutagen_class['TIT2']  = mutagen.id3.TIT2(encoding=3, text=metadict['title'])
+            if "artist" in metadict: mutagen_class['artist'] = mutagen.id3.TPE1(encoding=3, text=metadict['artist'])
+            if "comment" in metadict: mutagen_class['COMM'] = mutagen.id3.COMM(encoding=3, lang=u'eng', desc='comment', text=metadict['comment'])
+
         else:
             raise Exception("Unsuported file format for metadata (%s, %s)" % (audio_ext, audio_file))
+
+        if mutagen_class != None:
+            mutagen_class.save(audio_file)
 
     def find_prio(self, mpd):
         """
@@ -272,8 +282,9 @@ class tube():
         query = payload['query']
 
         if query.startswith("spotify:"):
-            # Handle spotify urls
+           # Handle spotify urls
            query = self.find_song_spotify(query)
+
            if not query:
                 self.log.warning("Failed to find anything on spotify for %s" % (query) )
                 if nurdbot:
@@ -298,8 +309,12 @@ class tube():
             name = ydl_info['entries'][0]['title']
         else:
             duration = ydl_info['duration']
-            filesize = ydl_info['filesize']
             name = ydl_info['title']
+
+            # Not everything has a filesize e.g Soundcloud
+            filesize = 0
+            if "filesize" in ydl_info:
+                filesize = ydl_info['filesize']
 
         if nurdbot:
             self.log_nurdbot("INFO", "Downloading %s (Duration: %s, size: %s)" % (name, self.convert_time(duration),
@@ -332,7 +347,7 @@ class tube():
         if not os.path.exists(file):
             self.log_error("Couldn't find %s" % file)
             if nurdbot:
-                self.log_nurdbot("ERROR", "Couldn't find %s" % file, payload)
+                self.log_nurdbot("ERROR", "Couldn't find '%s'" % file, payload)
 
             mpd.close()
             mpd.disconnect()
@@ -343,31 +358,34 @@ class tube():
         self.log_info("Attempting to add: %s" % query)
         mpd.update(os.path.join(self.config['paths']['relative'], file))
 
-        # Set creation and modification time to now
-        try:
-            os.utime(os.path.join(self.config['paths']['download'], file), times=None)
-        except Exception as e:
-            self.error("Failed to set time for %s (%s)" % (file, e))
-
         if not os.path.exists(file) and self.config['paths']['nfs_timeout'] > 0:
             # Wait a bit for it to sync back to NFS
             self.log_info("Waiting for NFS sync (Timeout in: %s seconds)" % self.config['paths']['nfs_timeout'])
             time_waited = 0
+
             while True:
                 if os.path.exists(not os.path.exists(file)):
-                    self.log.info("%s exists!", (file))
+                    self.log.info("%s alraedy exists!", (file))
                     break
 
                 if time_waited >= self.config['paths']['nfs_timeout']:
-                    self.log.error("Timeout waiting for %s to appear! (NFS)", (file))
-                    self.log_nurdbot("Timeout waiting for %s to appear! (NFS)", (file, payload))
+                    self.log.error("Timeout waiting for '%s' to appear! (NFS)", (file))
+                    self.log_nurdbot("Timeout waiting for '%s' to appear! (NFS)", (file, payload))
                     return
+
                 time.sleep(1)
                 time_waited += 1
 
-        # Set ID3 metadata
+
+        # Set creation and modification time to now
+        try:
+            os.utime(os.path.join(self.config['paths']['download'], file), times=None)
+        except Exception as e:
+            self.log.error("Failed to set time for %s (%s)" % (file, e))
+
+        # Set metadata
         title_artist = self.extract_artist_title(file)
-        metadata = {"title": title_artist[0], "comment": "%s (requested by %s)" % (query, payload['user'])}
+        metadata = {"title": title_artist[0], "comment": "%s (requested by %s at %s)" % (query, payload['user'], time.time())}
 
         if len(title_artist) == 2:
             metadata.update({"artist": title_artist[1]})
@@ -381,27 +399,27 @@ class tube():
         song_id = mpd.addid(os.path.join(self.config['paths']['relative'], file))
 
         if nurdbot:
-            self.log_nurdbot("INFO", "Adding %s to MPD @ pos %s" % (file, song_id), payload, directMessage=False)
+            self.log_nurdbot("INFO", "Adding '%s' to MPD (pos: %s)" % (file, song_id), payload, directMessage=False)
 
-        self.log_info("[%s] Song id is: %s" % (file, song_id))
+        self.log_info("[%s] id is: '%s'" % (file, song_id))
 
         mpd_status = mpd.status()
         self.log_info("MPD status: %s" % mpd_status['state'])
-        self.log.info("Current MPD song: %s" % mpd.currentsong()['file'])
+        self.log.info("Current song is: %s" % mpd.currentsong()['file'])
 
         if mpd_status['state'] != "play":
             # Start playing the song right away if we aren't playing anything yet.
 
-            self.log_info("playing song %s right away" % file)
+            self.log_info("playing '%s' right away" % file)
             mpd.playid(song_id)
             return
 
         elif mpd_status['random'] != "1":
-            self.log_warning("MPD is not in random mode, this is currently unsupported! Switching to Random mode")
+            self.log_warning("MPD is not in random mode, this is currently unsupported! Automatically switching to Random mode")
             mpd.random(1)
 
         prio = self.find_prio(mpd)
-        self.log_info("putting song %s at priority %s" % (file, prio))
+        self.log_info("Queueing '%s' at priority '%s'" % (file, prio))
         mpd.prioid(prio, song_id)
 
         mpd.close()
