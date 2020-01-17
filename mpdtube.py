@@ -115,11 +115,13 @@ class tube():
                     self.log_error("An exception occured while processing %s (%s)" % (item, e))
                     self.log.error(traceback.print_exc())
                     if item[1]:
-                        self.log_nurdbot("An exception occured while processing %s (%s)" % (item, e), item[0], directMessage=True)
+                        self.log_nurdbot("An exception occured while processing %s (%s)" % (item, item[0]), directMessage=True)
 
         self.log.warning("Queue thread has stopped")
 
     def convert_bytes(self, num):
+        if num is None:
+            return "0"
         step_unit = 1000.0 #1024 bad the size
 
         for x in ['bytes', 'KB', 'MB', 'GB', 'TB']:
